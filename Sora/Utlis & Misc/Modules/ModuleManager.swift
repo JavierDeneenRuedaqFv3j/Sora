@@ -17,6 +17,26 @@ class ModuleManager: ObservableObject {
     private let fileManager = FileManager.default
     private let modulesFileName = "modules.json"
     
+    // Pre-loaded module manifest URLs (best English sources for movies, TV, anime, live TV)
+    private static let defaultModuleURLs: [String] = [
+        // Movies & TV Shows
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/1movies/1movies.json",
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/himovies/himovies.json",
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hexa/hexa.json",
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kisskh/kisskh.json",
+        // Anime
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hianime/hianime.json",
+        "https://git.luna-app.eu/Churly/AllAnime/raw/branch/main/AllAnime/AllAnime.json",
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/anicrush/anicrush.json",
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/aniwatch/aniwatch.json",
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kimcartoon/kimcartoon.json",
+        // K-Drama
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/dramacool/dramacool.json",
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/kisskh/kisskh.json",
+        // Live TV
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/iptv-org/iptv-org.json",
+    ]
+    
     init() {
         let url = getModulesFilePath()
         if (!FileManager.default.fileExists(atPath: url.path)) {
@@ -28,7 +48,32 @@ class ModuleManager: ObservableObject {
             }
         }
         loadModules()
+        
+        // Seed default modules on first launch
+        if modules.isEmpty {
+            Task {
+                await seedDefaultModules()
+            }
+        }
+        
         NotificationCenter.default.addObserver(self, selector: #selector(handleModulesSyncCompleted), name: .modulesSyncDidComplete, object: nil)
+    }
+    
+    private func seedDefaultModules() async {
+        Logger.shared.log("Seeding default modules on first launch...", type: "Info")
+        var addedCount = 0
+        
+        for metadataUrl in ModuleManager.defaultModuleURLs {
+            do {
+                let _ = try await addModule(metadataUrl: metadataUrl)
+                addedCount += 1
+                Logger.shared.log("Seeded module from: \(metadataUrl)")
+            } catch {
+                Logger.shared.log("Failed to seed module from \(metadataUrl): \(error.localizedDescription)", type: "Error")
+            }
+        }
+        
+        Logger.shared.log("Seeded \(addedCount)/\(ModuleManager.defaultModuleURLs.count) default modules", type: "Info")
     }
     
     deinit {

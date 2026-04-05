@@ -6,11 +6,12 @@ on:
   pull_request:
     branches:
       - dev
+  workflow_dispatch:
       
 jobs:
   build-ios:
     name: Build IPA
-    runs-on: macos-26
+    runs-on: macos-latest
 
     steps:
       - name: Checkout repository
