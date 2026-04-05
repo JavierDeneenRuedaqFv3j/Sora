@@ -17,24 +17,34 @@ class ModuleManager: ObservableObject {
     private let fileManager = FileManager.default
     private let modulesFileName = "modules.json"
     
-    // Pre-loaded module manifest URLs (best English sources for movies, TV, anime, live TV)
+    // Pre-loaded module manifest URLs — top-rated English sources by install count
     private static let defaultModuleURLs: [String] = [
-        // Movies & TV Shows
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/1movies/1movies.json",
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/himovies/himovies.json",
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hexa/hexa.json",
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kisskh/kisskh.json",
-        // Anime
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hianime/hianime.json",
-        "https://git.luna-app.eu/Churly/AllAnime/raw/branch/main/AllAnime/AllAnime.json",
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/anicrush/anicrush.json",
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/aniwatch/aniwatch.json",
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kimcartoon/kimcartoon.json",
+        // Movies & TV Shows (top 9 by installs)
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/bingeflex/bingeflex.json",       // Bingeflix  14k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/net3lix/net3lix.json",           // Net3lix   10k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/flickystream/flickystream.json", // FlickyStream 5.8k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/rive/rive.json",                 // Rive      5.2k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/vixsrc/vixsrc.json",             // VixSrc    3.8k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/myflixer/myflixer.json",         // MyFlixer  2.7k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/sflix/sflix.json",                // SFlix     2.2k
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/1movies/1movies.json",           // 1Movies   2.1k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/hdtoday/hdtoday.json",           // HD Today  1.2k
+        // Multi-source players (featured)
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/videasy/videasy.json",           // VidEasy   1.7k
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/vidfast/vidfast.json",           // VidFast   1.7k
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/vidlink/vidlink.json",           // VidLink   1k
+        // Anime (top 6 by installs)
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hianime/hianime.json",           // HiAnime   15k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/aniwave/aniwave.json",           // Aniwave   5.7k
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kimcartoon/kimcartoon.json",     // KimCartoon 3.6k
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/animekai/hardsub/animekai.json", // AnimeKai Sub 2.2k
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/animekai/dub/animekai.json",     // AnimeKai Dub 1.2k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/animepahe/animepahe.json",       // Animepahe 455
         // K-Drama
-        "https://git.luna-app.eu/ibro/services/raw/branch/main/dramacool/dramacool.json",
-        "https://git.luna-app.eu/ibro/services/raw/branch/main/kisskh/kisskh.json",
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/kisskh/kisskh.json",             // KissKH    1.4k
+        "https://git.luna-app.eu/ibro/services/raw/branch/main/dramacool/dramacool.json",       // DramaCool 540
         // Live TV
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/iptv-org/iptv-org.json",
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/iptv-org/iptv-org.json",         // IPTV-org  247
     ]
     
     init() {
