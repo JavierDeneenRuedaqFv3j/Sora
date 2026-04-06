@@ -58,9 +58,8 @@ class HomeDataManager: ObservableObject {
     // Live TV categories (IPTV-org module — searches channel names)
     private let liveTVCategories: [(String, String)] = [
         ("🔴 Turkish TV", "trt"),
-        ("🔴 Dutch TV", "nederland"),
+        ("🔴 Netherlands TV", "nederland"),
         ("🔴 beIN Sports", "bein"),
-        ("🔴 Sports TV", "sport"),
     ]
     
     // Module names that support TMDB !-keyword browsing
