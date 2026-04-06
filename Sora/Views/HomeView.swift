@@ -32,18 +32,25 @@ class HomeDataManager: ObservableObject {
         let href: String
     }
     
-    private let categoryQueries: [(String, String, [String])] = [
-        ("Trending Movies", "avengers", ["movie", "show"]),
-        ("Popular TV Shows", "game of thrones", ["show", "movie"]),
-        ("New Releases", "dune", ["movie", "show"]),
-        ("Top Anime", "naruto", ["anime"]),
-        ("Action", "john wick", ["movie", "show"]),
-        ("Comedy", "hangover", ["movie", "show"]),
-        ("Horror", "conjuring", ["movie", "show"]),
-        ("Sci-Fi", "star wars", ["movie", "show"]),
-        ("Romance Anime", "love", ["anime"]),
-        ("K-Drama", "love", ["drama", "show"]),
+    // TMDB keyword categories (require VidEasy/VidFast/VidLink — they support !-prefixed keywords)
+    private let tmdbCategories: [(String, String)] = [
+        ("Trending", "!trending"),
+        ("Popular Movies", "!popular-movie"),
+        ("Popular TV Shows", "!popular-tv"),
+        ("Top Rated Movies", "!top-rated-movie"),
+        ("Top Rated TV", "!top-rated-tv"),
     ]
+    
+    // Search-based categories using regular queries
+    private let searchCategories: [(String, String, [String])] = [
+        ("Top Anime", "naruto", ["anime"]),
+        ("Action Movies", "john wick", ["movie", "show"]),
+        ("Sci-Fi", "star wars", ["movie", "show"]),
+        ("Popular Anime", "one piece", ["anime"]),
+    ]
+    
+    // Module names that support TMDB !-keyword browsing
+    private let tmdbModuleNames: Set<String> = ["videasy", "vidfast", "vidlink"]
     
     func loadContent(modules: [ScrapingModule], moduleManager: ModuleManager) async {
         guard !isLoading, !modules.isEmpty else { return }
@@ -51,51 +58,27 @@ class HomeDataManager: ObservableObject {
         
         let jsController = JSController.shared
         var newSections: [HomeSection] = []
-        var usedModuleIndices: [String: Int] = [:]
         
-        for (title, query, typeKeywords) in categoryQueries {
+        // --- Phase 1: TMDB categories (VidEasy/VidFast/VidLink only) ---
+        let tmdbModules = modules.filter { tmdbModuleNames.contains($0.metadata.sourceName.lowercased()) }
+        
+        for (idx, (title, query)) in tmdbCategories.enumerated() {
+            if Task.isCancelled { break }
+            guard !tmdbModules.isEmpty else { break }
+            
+            let module = tmdbModules[idx % tmdbModules.count]
+            if let section = await fetchSection(title: title, query: query, module: module, moduleManager: moduleManager, jsController: jsController) {
+                newSections.append(section)
+            }
+        }
+        
+        // --- Phase 2: Search-based categories ---
+        for (title, query, typeKeywords) in searchCategories {
             if Task.isCancelled { break }
             
-            let typeKey = typeKeywords.joined(separator: ",")
-            let nextIndex = usedModuleIndices[typeKey] ?? 0
-            guard let module = findBestModule(modules: modules, typeKeywords: typeKeywords, offset: nextIndex) else { continue }
-            usedModuleIndices[typeKey] = nextIndex + 1
-            
-            do {
-                let jsContent = try moduleManager.getModuleContent(module)
-                jsController.loadScript(jsContent)
-                
-                let items: [HomeItem] = await withCheckedContinuation { continuation in
-                    var hasResumed = false
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
-                        if !hasResumed {
-                            hasResumed = true
-                            continuation.resume(returning: [])
-                        }
-                    }
-                    
-                    let handler: ([SearchItem]) -> Void = { searchItems in
-                        guard !hasResumed else { return }
-                        hasResumed = true
-                        let homeItems = searchItems.prefix(20).map { item in
-                            HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
-                        }
-                        continuation.resume(returning: Array(homeItems))
-                    }
-                    
-                    if module.metadata.asyncJS == true {
-                        jsController.fetchJsSearchResults(keyword: query, module: module, completion: handler)
-                    } else {
-                        jsController.fetchSearchResults(keyword: query, module: module, completion: handler)
-                    }
-                }
-                
-                if !items.isEmpty {
-                    newSections.append(HomeSection(title: title, items: items, module: module))
-                }
-            } catch {
-                Logger.shared.log("HomeView: Failed to load \(title) from \(module.metadata.sourceName): \(error.localizedDescription)", type: "Error")
+            guard let module = findBestModule(modules: modules, typeKeywords: typeKeywords) else { continue }
+            if let section = await fetchSection(title: title, query: query, module: module, moduleManager: moduleManager, jsController: jsController) {
+                newSections.append(section)
             }
         }
         
@@ -104,8 +87,53 @@ class HomeDataManager: ObservableObject {
         hasLoaded = true
     }
     
-    private func findBestModule(modules: [ScrapingModule], typeKeywords: [String], offset: Int = 0) -> ScrapingModule? {
-        let nameMatches = modules.filter { module in
+    private func fetchSection(title: String, query: String, module: ScrapingModule, moduleManager: ModuleManager, jsController: JSController) async -> HomeSection? {
+        do {
+            let jsContent = try moduleManager.getModuleContent(module)
+            jsController.loadScript(jsContent)
+            
+            let items: [HomeItem] = await withCheckedContinuation { continuation in
+                var hasResumed = false
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                    if !hasResumed {
+                        hasResumed = true
+                        continuation.resume(returning: [])
+                    }
+                }
+                
+                let handler: ([SearchItem]) -> Void = { searchItems in
+                    guard !hasResumed else { return }
+                    hasResumed = true
+                    let homeItems = searchItems
+                        .filter { $0.title != "Error" && !$0.title.isEmpty && !$0.title.hasPrefix("Search failed") }
+                        .prefix(20)
+                        .map { item in HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href) }
+                    continuation.resume(returning: Array(homeItems))
+                }
+                
+                if module.metadata.asyncJS == true {
+                    jsController.fetchJsSearchResults(keyword: query, module: module, completion: handler)
+                } else {
+                    jsController.fetchSearchResults(keyword: query, module: module, completion: handler)
+                }
+            }
+            
+            if !items.isEmpty {
+                return HomeSection(title: title, items: items, module: module)
+            }
+        } catch {
+            Logger.shared.log("HomeView: Failed to load \(title) from \(module.metadata.sourceName): \(error.localizedDescription)", type: "Error")
+        }
+        return nil
+    }
+    
+    private func findBestModule(modules: [ScrapingModule], typeKeywords: [String]) -> ScrapingModule? {
+        // Preferred order for each category type
+        let preferredAnime = ["hianime", "animekai", "kimcartoon"]
+        let preferredMovieTV = ["videasy", "vidfast", "vidlink", "1movies"]
+        
+        let candidates = modules.filter { module in
             let name = module.metadata.sourceName.lowercased()
             let lang = (module.metadata.language ?? "").lowercased()
             let moduleType = (module.metadata.type ?? "").lowercased()
@@ -113,29 +141,25 @@ class HomeDataManager: ObservableObject {
             guard isEnglish else { return false }
             
             if typeKeywords.contains("anime") {
-                return name.contains("anime") || name.contains("aniwave") || name.contains("hianime") || name.contains("pahe") || moduleType.contains("anime")
-            } else if typeKeywords.contains("drama") {
-                return name.contains("drama") || name.contains("kisskh") || moduleType.contains("drama")
+                return name.contains("anime") || name.contains("hianime") || name.contains("cartoon") || moduleType.contains("anime")
+            } else if typeKeywords.contains("cartoon") {
+                return name.contains("cartoon") || moduleType.contains("anime")
             } else {
-                let isAnime = name.contains("anime") || name.contains("aniwave") || name.contains("hianime") || name.contains("pahe") || moduleType.contains("anime")
-                let isDrama = name.contains("drama") || name.contains("kisskh") || moduleType.contains("drama")
-                let isCartoon = name.contains("cartoon")
+                let isAnimeOnly = (name.contains("anime") || name.contains("hianime")) && !moduleType.contains("movie") && !moduleType.contains("show")
                 let isIPTV = name.contains("iptv")
-                return !isAnime && !isDrama && !isCartoon && !isIPTV
+                return !isAnimeOnly && !isIPTV
             }
         }
         
-        if !nameMatches.isEmpty {
-            let idx = offset % nameMatches.count
-            return nameMatches[idx]
+        // Sort by preference order
+        let preferred = typeKeywords.contains("anime") ? preferredAnime : preferredMovieTV
+        let sorted = candidates.sorted { a, b in
+            let aIdx = preferred.firstIndex(where: { a.metadata.sourceName.lowercased().contains($0) }) ?? 999
+            let bIdx = preferred.firstIndex(where: { b.metadata.sourceName.lowercased().contains($0) }) ?? 999
+            return aIdx < bIdx
         }
         
-        // Fallback: any non-anime, non-drama module
-        let fallback = modules.filter { module in
-            let name = module.metadata.sourceName.lowercased()
-            return !name.contains("iptv")
-        }
-        return fallback.first ?? modules.first
+        return sorted.first ?? candidates.first ?? modules.first
     }
 }
 
