@@ -46,7 +46,21 @@ class HomeDataManager: ObservableObject {
         ("Top Anime", "naruto", ["anime"]),
         ("Action Movies", "john wick", ["movie", "show"]),
         ("Sci-Fi", "star wars", ["movie", "show"]),
-        ("Popular Anime", "one piece", ["anime"]),
+        ("Horror", "conjuring", ["movie", "show"]),
+        ("Comedy", "hangover", ["movie", "show"]),
+        ("Romance", "notebook", ["movie", "show"]),
+        ("Popular Anime", "one piece", ["movie", "show", "anime"]),
+        ("Turkish Series", "ask", ["turkish"]),
+        ("K-Drama", "love", ["drama"]),
+        ("Cartoons", "batman", ["cartoon"]),
+    ]
+    
+    // Live TV categories (IPTV-org module — searches channel names)
+    private let liveTVCategories: [(String, String)] = [
+        ("🔴 Turkish TV", "trt"),
+        ("🔴 Dutch TV", "nederland"),
+        ("🔴 beIN Sports", "bein"),
+        ("🔴 Sports TV", "sport"),
     ]
     
     // Module names that support TMDB !-keyword browsing
@@ -79,6 +93,16 @@ class HomeDataManager: ObservableObject {
             guard let module = findBestModule(modules: modules, typeKeywords: typeKeywords) else { continue }
             if let section = await fetchSection(title: title, query: query, module: module, moduleManager: moduleManager, jsController: jsController) {
                 newSections.append(section)
+            }
+        }
+        
+        // --- Phase 3: Live TV categories (IPTV-org) ---
+        if let iptvModule = modules.first(where: { $0.metadata.sourceName.lowercased().contains("iptv") }) {
+            for (title, query) in liveTVCategories {
+                if Task.isCancelled { break }
+                if let section = await fetchSection(title: title, query: query, module: iptvModule, moduleManager: moduleManager, jsController: jsController) {
+                    newSections.append(section)
+                }
             }
         }
         
@@ -129,30 +153,42 @@ class HomeDataManager: ObservableObject {
     }
     
     private func findBestModule(modules: [ScrapingModule], typeKeywords: [String]) -> ScrapingModule? {
-        // Preferred order for each category type
-        let preferredAnime = ["hianime", "animekai", "kimcartoon"]
-        let preferredMovieTV = ["videasy", "vidfast", "vidlink", "1movies"]
+        let preferredAnime = ["hianime", "animekai", "animeheaven", "anicrush", "fireanime", "animenosub", "kimcartoon"]
+        let preferredMovieTV = ["videasy", "vidfast", "vidlink", "1movies", "ashi", "himovies", "hexa"]
+        let preferredTurkish = ["turkish123"]
+        let preferredDrama = ["kisskh", "kissasian"]
         
         let candidates = modules.filter { module in
             let name = module.metadata.sourceName.lowercased()
             let lang = (module.metadata.language ?? "").lowercased()
             let moduleType = (module.metadata.type ?? "").lowercased()
             let isEnglish = lang.contains("english") || lang.contains("multi") || lang.isEmpty
-            guard isEnglish else { return false }
             
-            if typeKeywords.contains("anime") {
+            if typeKeywords.contains("turkish") {
+                return lang.contains("turkish") || name.contains("turkish")
+            } else if typeKeywords.contains("anime") {
+                guard isEnglish else { return false }
                 return name.contains("anime") || name.contains("hianime") || name.contains("cartoon") || moduleType.contains("anime")
             } else if typeKeywords.contains("cartoon") {
-                return name.contains("cartoon") || moduleType.contains("anime")
+                guard isEnglish else { return false }
+                return name.contains("cartoon") || name.contains("toon")
+            } else if typeKeywords.contains("drama") {
+                return name.contains("kisskh") || name.contains("kissasian") || name.contains("drama") || moduleType.contains("drama")
             } else {
+                guard isEnglish else { return false }
                 let isAnimeOnly = (name.contains("anime") || name.contains("hianime")) && !moduleType.contains("movie") && !moduleType.contains("show")
                 let isIPTV = name.contains("iptv")
-                return !isAnimeOnly && !isIPTV
+                let isTurkish = lang.contains("turkish")
+                return !isAnimeOnly && !isIPTV && !isTurkish
             }
         }
         
-        // Sort by preference order
-        let preferred = typeKeywords.contains("anime") ? preferredAnime : preferredMovieTV
+        let preferred: [String]
+        if typeKeywords.contains("turkish") { preferred = preferredTurkish }
+        else if typeKeywords.contains("anime") || typeKeywords.contains("cartoon") { preferred = preferredAnime }
+        else if typeKeywords.contains("drama") { preferred = preferredDrama }
+        else { preferred = preferredMovieTV }
+        
         let sorted = candidates.sorted { a, b in
             let aIdx = preferred.firstIndex(where: { a.metadata.sourceName.lowercased().contains($0) }) ?? 999
             let bIdx = preferred.firstIndex(where: { b.metadata.sourceName.lowercased().contains($0) }) ?? 999

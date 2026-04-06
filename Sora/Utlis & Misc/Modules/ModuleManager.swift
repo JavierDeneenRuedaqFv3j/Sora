@@ -17,21 +17,32 @@ class ModuleManager: ObservableObject {
     private let fileManager = FileManager.default
     private let modulesFileName = "modules.json"
     
-    // Pre-loaded module manifest URLs — working 50n50 sources only
-    // Note: ibro/services modules removed (clannad-peak.vercel.app proxy is dead)
+    // Pre-loaded module manifest URLs — working sources only
+    // Note: ibro/services modules excluded (clannad-peak.vercel.app proxy is dead)
     private static let defaultModuleURLs: [String] = [
         // Movies & TV (TMDB search via working post-eosin proxy + direct scraping)
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/videasy/videasy.json",           // VidEasy   — TMDB + multi-source player
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/vidfast/vidfast.json",           // VidFast   — TMDB + multi-source player
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/vidlink/vidlink.json",           // VidLink   — TMDB + multi-source player
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/1movies/1movies.json",           // 1Movies   — direct HTML scraping
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/videasy/videasy.json",           // VidEasy   — TMDB + multi-source
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/vidfast/vidfast.json",           // VidFast   — TMDB + multi-source
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/vidlink/vidlink.json",           // VidLink   — TMDB + multi-source
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/1movies/1movies.json",           // 1Movies   — HTML scraping
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/ashi/ashi.json",                 // Ashi      — "Literally Everything"
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/himovies/himovies.json",         // HiMovies  — direct scraping
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hexa/hexa.json",                 // Hexa      — multi-source
         // Anime
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hianime/hianime.json",           // HiAnime   — direct HTML scraping
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kimcartoon/kimcartoon.json",     // KimCartoon — direct HTML scraping
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/hianime/hianime.json",           // HiAnime   — top anime source
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kimcartoon/kimcartoon.json",     // KimCartoon
         "https://git.luna-app.eu/50n50/sources/raw/branch/main/animekai/hardsub/animekai.json", // AnimeKai Sub
         "https://git.luna-app.eu/50n50/sources/raw/branch/main/animekai/dub/animekai.json",     // AnimeKai Dub
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/animeheaven/animeheaven.json",   // AnimeHeaven
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/anicrush/anicrush.json",         // AniCrush
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/fireanime/fireanime.json",       // FireAnime
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/animenosub/animenosub.json",     // AnimeNoSub
+        // K-Drama
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/kisskh/kisskh.json",             // KissKH (50n50 version)
+        // Turkish
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/turkish123/turkish123.json",     // Turkish123
         // Live TV
-        "https://git.luna-app.eu/50n50/sources/raw/branch/main/iptv-org/iptv-org.json",         // IPTV-org
+        "https://git.luna-app.eu/50n50/sources/raw/branch/main/iptv-org/iptv-org.json",         // IPTV-org (12k+ channels)
     ]
     
     init() {
