@@ -7,6 +7,7 @@
 
 import SwiftUI
 import NukeUI
+import JavaScriptCore
 
 // MARK: - Home Data Manager
 
@@ -35,7 +36,7 @@ class HomeDataManager: ObservableObject {
     private let categoryQueries: [(String, String, [String])] = [
         ("Trending Movies", "avengers", ["movie", "show"]),
         ("Popular TV Shows", "game of thrones", ["show", "movie"]),
-        ("New Releases", "2025", ["movie", "show"]),
+        ("New Releases", "dune", ["movie", "show"]),
         ("Top Anime", "naruto", ["anime"]),
         ("Action", "john wick", ["movie", "show"]),
         ("Comedy", "hangover", ["movie", "show"]),
@@ -49,12 +50,12 @@ class HomeDataManager: ObservableObject {
         guard !isLoading, !modules.isEmpty else { return }
         isLoading = true
         
-        let jsController = JSController.shared
         var newSections: [HomeSection] = []
-        
         var usedModuleIndices: [String: Int] = [:]
         
         for (title, query, typeKeywords) in categoryQueries {
+            if Task.isCancelled { break }
+            
             let typeKey = typeKeywords.joined(separator: ",")
             let nextIndex = usedModuleIndices[typeKey] ?? 0
             guard let module = findBestModule(modules: modules, typeKeywords: typeKeywords, offset: nextIndex) else { continue }
@@ -62,33 +63,96 @@ class HomeDataManager: ObservableObject {
             
             do {
                 let jsContent = try moduleManager.getModuleContent(module)
-                jsController.loadScript(jsContent)
                 
+                // Use local JSContext to avoid race conditions with SearchView's JSController.shared
                 let items: [HomeItem] = await withCheckedContinuation { continuation in
                     var hasResumed = false
                     
-                    // Timeout after 8 seconds
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                         if !hasResumed {
                             hasResumed = true
                             continuation.resume(returning: [])
                         }
                     }
                     
-                    let handler: ([SearchItem]) -> Void = { searchItems in
-                        if !hasResumed {
-                            hasResumed = true
-                            let homeItems = searchItems.prefix(20).map { item in
-                                HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
-                            }
-                            continuation.resume(returning: Array(homeItems))
-                        }
-                    }
-                    
                     if module.metadata.asyncJS == true {
-                        jsController.fetchJsSearchResults(keyword: query, module: module, completion: handler)
+                        // Async modules: JS handles HTTP requests via fetchv2
+                        let localContext = JSContext()!
+                        localContext.setupJavaScriptEnvironment()
+                        localContext.evaluateScript(jsContent)
+                        
+                        guard let searchFn = localContext.objectForKeyedSubscript("searchResults"),
+                              let promise = searchFn.call(withArguments: [query]) else {
+                            if !hasResumed { hasResumed = true; continuation.resume(returning: []) }
+                            return
+                        }
+                        
+                        let thenBlock: @convention(block) (JSValue) -> Void = { result in
+                            guard !hasResumed else { return }
+                            if let jsonStr = result.toString(),
+                               let data = jsonStr.data(using: .utf8),
+                               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                                let homeItems = array.prefix(20).compactMap { dict -> HomeItem? in
+                                    guard let t = dict["title"] as? String,
+                                          let img = dict["image"] as? String,
+                                          let href = dict["href"] as? String else { return nil }
+                                    return HomeItem(title: t, imageUrl: img, href: href)
+                                }
+                                hasResumed = true
+                                DispatchQueue.main.async { continuation.resume(returning: Array(homeItems)) }
+                            } else {
+                                hasResumed = true
+                                DispatchQueue.main.async { continuation.resume(returning: []) }
+                            }
+                        }
+                        
+                        let catchBlock: @convention(block) (JSValue) -> Void = { _ in
+                            guard !hasResumed else { return }
+                            hasResumed = true
+                            DispatchQueue.main.async { continuation.resume(returning: []) }
+                        }
+                        
+                        let thenFn = JSValue(object: thenBlock, in: localContext)
+                        let catchFn = JSValue(object: catchBlock, in: localContext)
+                        promise.invokeMethod("then", withArguments: [thenFn as Any])
+                        promise.invokeMethod("catch", withArguments: [catchFn as Any])
+                        
                     } else {
-                        jsController.fetchSearchResults(keyword: query, module: module, completion: handler)
+                        // Non-async modules: fetch HTML, then parse with local JSContext
+                        let searchUrl = module.metadata.searchBaseUrl.replacingOccurrences(
+                            of: "%s",
+                            with: query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                        )
+                        
+                        guard let url = URL(string: searchUrl) else {
+                            if !hasResumed { hasResumed = true; continuation.resume(returning: []) }
+                            return
+                        }
+                        
+                        URLSession.custom.dataTask(with: url) { data, _, error in
+                            guard !hasResumed else { return }
+                            guard let data = data, let html = String(data: data, encoding: .utf8) else {
+                                hasResumed = true
+                                DispatchQueue.main.async { continuation.resume(returning: []) }
+                                return
+                            }
+                            
+                            let localContext = JSContext()!
+                            localContext.setupJavaScriptEnvironment()
+                            localContext.evaluateScript(jsContent)
+                            
+                            if let parseFn = localContext.objectForKeyedSubscript("searchResults"),
+                               let results = parseFn.call(withArguments: [html]).toArray() as? [[String: String]] {
+                                let homeItems = results.prefix(20).map {
+                                    HomeItem(title: $0["title"] ?? "", imageUrl: $0["image"] ?? "", href: $0["href"] ?? "")
+                                }
+                                hasResumed = true
+                                DispatchQueue.main.async { continuation.resume(returning: Array(homeItems)) }
+                            } else {
+                                hasResumed = true
+                                DispatchQueue.main.async { continuation.resume(returning: []) }
+                            }
+                        }.resume()
                     }
                 }
                 
@@ -148,6 +212,7 @@ struct HomeView: View {
     @StateObject private var homeData = HomeDataManager.shared
     @State private var continueWatchingItems: [ContinueWatchingItem] = []
     @State private var isActive: Bool = false
+    @State private var loadingTask: Task<Void, Never>?
     
     var body: some View {
         NavigationView {
@@ -220,12 +285,11 @@ struct HomeView: View {
             }
             .onDisappear {
                 isActive = false
+                loadingTask?.cancel()
             }
             .onChange(of: moduleManager.modules.count) { newCount in
-                // Modules just finished seeding — try loading home content
                 if newCount > 0 && !homeData.hasLoaded {
-                    Task {
-                        // Small delay to let modules fully initialize
+                    loadingTask = Task {
                         try? await Task.sleep(nanoseconds: 500_000_000)
                         await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
                     }
@@ -257,13 +321,12 @@ struct HomeView: View {
     
     private func triggerLoadIfReady() {
         if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
-            Task {
+            loadingTask = Task {
                 await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
             }
         } else if moduleManager.modules.isEmpty {
-            // Modules still seeding — retry after delay
-            Task {
-                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+            loadingTask = Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
                     await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
                 }
