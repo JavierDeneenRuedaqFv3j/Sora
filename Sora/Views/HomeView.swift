@@ -33,26 +33,25 @@ class HomeDataManager: ObservableObject {
     }
     
     private let categoryQueries: [(String, String, [String])] = [
-        ("Trending Movies", "trending", ["movie", "show"]),
-        ("Popular TV Shows", "popular", ["show", "movie"]),
+        ("Trending Movies", "avengers", ["movie", "show"]),
+        ("Popular TV Shows", "game of thrones", ["show", "movie"]),
         ("New Releases", "2025", ["movie", "show"]),
-        ("Top Anime", "popular", ["anime"]),
-        ("Action", "action", ["movie", "show"]),
-        ("Comedy", "comedy", ["movie", "show"]),
-        ("Horror", "horror", ["movie", "show"]),
-        ("Sci-Fi", "sci-fi", ["movie", "show"]),
-        ("Romance Anime", "romance", ["anime"]),
-        ("K-Drama", "drama", ["drama", "show"]),
+        ("Top Anime", "naruto", ["anime"]),
+        ("Action", "john wick", ["movie", "show"]),
+        ("Comedy", "hangover", ["movie", "show"]),
+        ("Horror", "conjuring", ["movie", "show"]),
+        ("Sci-Fi", "star wars", ["movie", "show"]),
+        ("Romance Anime", "love", ["anime"]),
+        ("K-Drama", "love", ["drama", "show"]),
     ]
     
     func loadContent(modules: [ScrapingModule], moduleManager: ModuleManager) async {
-        guard !isLoading else { return }
+        guard !isLoading, !modules.isEmpty else { return }
         isLoading = true
         
         let jsController = JSController.shared
         var newSections: [HomeSection] = []
         
-        // Track which modules we've used to rotate through them
         var usedModuleIndices: [String: Int] = [:]
         
         for (title, query, typeKeywords) in categoryQueries {
@@ -65,21 +64,31 @@ class HomeDataManager: ObservableObject {
                 let jsContent = try moduleManager.getModuleContent(module)
                 jsController.loadScript(jsContent)
                 
-                let items = await withCheckedContinuation { continuation in
+                let items: [HomeItem] = await withCheckedContinuation { continuation in
+                    var hasResumed = false
+                    
+                    // Timeout after 8 seconds
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                        if !hasResumed {
+                            hasResumed = true
+                            continuation.resume(returning: [])
+                        }
+                    }
+                    
+                    let handler: ([SearchItem]) -> Void = { searchItems in
+                        if !hasResumed {
+                            hasResumed = true
+                            let homeItems = searchItems.prefix(20).map { item in
+                                HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
+                            }
+                            continuation.resume(returning: Array(homeItems))
+                        }
+                    }
+                    
                     if module.metadata.asyncJS == true {
-                        jsController.fetchJsSearchResults(keyword: query, module: module) { searchItems in
-                            let homeItems = searchItems.prefix(20).map { item in
-                                HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
-                            }
-                            continuation.resume(returning: Array(homeItems))
-                        }
+                        jsController.fetchJsSearchResults(keyword: query, module: module, completion: handler)
                     } else {
-                        jsController.fetchSearchResults(keyword: query, module: module) { searchItems in
-                            let homeItems = searchItems.prefix(20).map { item in
-                                HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
-                            }
-                            continuation.resume(returning: Array(homeItems))
-                        }
+                        jsController.fetchSearchResults(keyword: query, module: module, completion: handler)
                     }
                 }
                 
@@ -87,7 +96,7 @@ class HomeDataManager: ObservableObject {
                     newSections.append(HomeSection(title: title, items: items, module: module))
                 }
             } catch {
-                Logger.shared.log("HomeView: Failed to load \(title): \(error.localizedDescription)", type: "Error")
+                Logger.shared.log("HomeView: Failed to load \(title) from \(module.metadata.sourceName): \(error.localizedDescription)", type: "Error")
             }
         }
         
@@ -97,20 +106,23 @@ class HomeDataManager: ObservableObject {
     }
     
     private func findBestModule(modules: [ScrapingModule], typeKeywords: [String], offset: Int = 0) -> ScrapingModule? {
-        // First try to match by module source name keywords
         let nameMatches = modules.filter { module in
             let name = module.metadata.sourceName.lowercased()
             let lang = (module.metadata.language ?? "").lowercased()
+            let moduleType = (module.metadata.type ?? "").lowercased()
             let isEnglish = lang.contains("english") || lang.contains("multi") || lang.isEmpty
             guard isEnglish else { return false }
             
             if typeKeywords.contains("anime") {
-                return name.contains("anime") || name.contains("aniwave") || name.contains("hianime") || name.contains("pahe")
+                return name.contains("anime") || name.contains("aniwave") || name.contains("hianime") || name.contains("pahe") || moduleType.contains("anime")
             } else if typeKeywords.contains("drama") {
-                return name.contains("drama") || name.contains("kisskh")
+                return name.contains("drama") || name.contains("kisskh") || moduleType.contains("drama")
             } else {
-                // Movie/show type - exclude anime/drama specific
-                return !name.contains("anime") && !name.contains("aniwave") && !name.contains("hianime") && !name.contains("drama") && !name.contains("kisskh") && !name.contains("cartoon") && !name.contains("pahe")
+                let isAnime = name.contains("anime") || name.contains("aniwave") || name.contains("hianime") || name.contains("pahe") || moduleType.contains("anime")
+                let isDrama = name.contains("drama") || name.contains("kisskh") || moduleType.contains("drama")
+                let isCartoon = name.contains("cartoon")
+                let isIPTV = name.contains("iptv")
+                return !isAnime && !isDrama && !isCartoon && !isIPTV
             }
         }
         
@@ -119,7 +131,12 @@ class HomeDataManager: ObservableObject {
             return nameMatches[idx]
         }
         
-        return modules.first
+        // Fallback: any non-anime, non-drama module
+        let fallback = modules.filter { module in
+            let name = module.metadata.sourceName.lowercased()
+            return !name.contains("iptv")
+        }
+        return fallback.first ?? modules.first
     }
 }
 
@@ -198,19 +215,18 @@ struct HomeView: View {
             .onAppear {
                 isActive = true
                 loadContinueWatching()
-                if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
-                    Task {
-                        await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
-                    }
-                }
+                triggerLoadIfReady()
                 NotificationCenter.default.post(name: .showTabBar, object: nil)
             }
             .onDisappear {
                 isActive = false
             }
-            .onChange(of: moduleManager.modules.count) { _ in
-                if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
+            .onChange(of: moduleManager.modules.count) { newCount in
+                // Modules just finished seeding — try loading home content
+                if newCount > 0 && !homeData.hasLoaded {
                     Task {
+                        // Small delay to let modules fully initialize
+                        try? await Task.sleep(nanoseconds: 500_000_000)
                         await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
                     }
                 }
@@ -237,6 +253,22 @@ struct HomeView: View {
     
     private func loadContinueWatching() {
         continueWatchingItems = ContinueWatchingManager.shared.fetchItems()
+    }
+    
+    private func triggerLoadIfReady() {
+        if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
+            Task {
+                await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
+            }
+        } else if moduleManager.modules.isEmpty {
+            // Modules still seeding — retry after delay
+            Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+                if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
+                    await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
+                }
+            }
+        }
     }
 }
 
