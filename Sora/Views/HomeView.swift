@@ -7,7 +7,6 @@
 
 import SwiftUI
 import NukeUI
-import JavaScriptCore
 
 // MARK: - Home Data Manager
 
@@ -50,6 +49,7 @@ class HomeDataManager: ObservableObject {
         guard !isLoading, !modules.isEmpty else { return }
         isLoading = true
         
+        let jsController = JSController.shared
         var newSections: [HomeSection] = []
         var usedModuleIndices: [String: Int] = [:]
         
@@ -63,96 +63,31 @@ class HomeDataManager: ObservableObject {
             
             do {
                 let jsContent = try moduleManager.getModuleContent(module)
+                jsController.loadScript(jsContent)
                 
-                // Use local JSContext to avoid race conditions with SearchView's JSController.shared
                 let items: [HomeItem] = await withCheckedContinuation { continuation in
                     var hasResumed = false
                     
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
                         if !hasResumed {
                             hasResumed = true
                             continuation.resume(returning: [])
                         }
                     }
                     
+                    let handler: ([SearchItem]) -> Void = { searchItems in
+                        guard !hasResumed else { return }
+                        hasResumed = true
+                        let homeItems = searchItems.prefix(20).map { item in
+                            HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
+                        }
+                        continuation.resume(returning: Array(homeItems))
+                    }
+                    
                     if module.metadata.asyncJS == true {
-                        // Async modules: JS handles HTTP requests via fetchv2
-                        let localContext = JSContext()!
-                        localContext.setupJavaScriptEnvironment()
-                        localContext.evaluateScript(jsContent)
-                        
-                        guard let searchFn = localContext.objectForKeyedSubscript("searchResults"),
-                              let promise = searchFn.call(withArguments: [query]) else {
-                            if !hasResumed { hasResumed = true; continuation.resume(returning: []) }
-                            return
-                        }
-                        
-                        let thenBlock: @convention(block) (JSValue) -> Void = { result in
-                            guard !hasResumed else { return }
-                            if let jsonStr = result.toString(),
-                               let data = jsonStr.data(using: .utf8),
-                               let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                                let homeItems = array.prefix(20).compactMap { dict -> HomeItem? in
-                                    guard let t = dict["title"] as? String,
-                                          let img = dict["image"] as? String,
-                                          let href = dict["href"] as? String else { return nil }
-                                    return HomeItem(title: t, imageUrl: img, href: href)
-                                }
-                                hasResumed = true
-                                DispatchQueue.main.async { continuation.resume(returning: Array(homeItems)) }
-                            } else {
-                                hasResumed = true
-                                DispatchQueue.main.async { continuation.resume(returning: []) }
-                            }
-                        }
-                        
-                        let catchBlock: @convention(block) (JSValue) -> Void = { _ in
-                            guard !hasResumed else { return }
-                            hasResumed = true
-                            DispatchQueue.main.async { continuation.resume(returning: []) }
-                        }
-                        
-                        let thenFn = JSValue(object: thenBlock, in: localContext)
-                        let catchFn = JSValue(object: catchBlock, in: localContext)
-                        promise.invokeMethod("then", withArguments: [thenFn as Any])
-                        promise.invokeMethod("catch", withArguments: [catchFn as Any])
-                        
+                        jsController.fetchJsSearchResults(keyword: query, module: module, completion: handler)
                     } else {
-                        // Non-async modules: fetch HTML, then parse with local JSContext
-                        let searchUrl = module.metadata.searchBaseUrl.replacingOccurrences(
-                            of: "%s",
-                            with: query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-                        )
-                        
-                        guard let url = URL(string: searchUrl) else {
-                            if !hasResumed { hasResumed = true; continuation.resume(returning: []) }
-                            return
-                        }
-                        
-                        URLSession.custom.dataTask(with: url) { data, _, error in
-                            guard !hasResumed else { return }
-                            guard let data = data, let html = String(data: data, encoding: .utf8) else {
-                                hasResumed = true
-                                DispatchQueue.main.async { continuation.resume(returning: []) }
-                                return
-                            }
-                            
-                            let localContext = JSContext()!
-                            localContext.setupJavaScriptEnvironment()
-                            localContext.evaluateScript(jsContent)
-                            
-                            if let parseFn = localContext.objectForKeyedSubscript("searchResults"),
-                               let results = parseFn.call(withArguments: [html]).toArray() as? [[String: String]] {
-                                let homeItems = results.prefix(20).map {
-                                    HomeItem(title: $0["title"] ?? "", imageUrl: $0["image"] ?? "", href: $0["href"] ?? "")
-                                }
-                                hasResumed = true
-                                DispatchQueue.main.async { continuation.resume(returning: Array(homeItems)) }
-                            } else {
-                                hasResumed = true
-                                DispatchQueue.main.async { continuation.resume(returning: []) }
-                            }
-                        }.resume()
+                        jsController.fetchSearchResults(keyword: query, module: module, completion: handler)
                     }
                 }
                 

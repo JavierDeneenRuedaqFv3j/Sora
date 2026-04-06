@@ -305,6 +305,9 @@ extension JSContext {
             }
             """
         self.evaluateScript(fetchv2Definition)
+        
+        // soraFetch is an alias used by many community modules (Bingeflix, Net3lix, etc.)
+        self.evaluateScript("var soraFetch = fetchv2;")
     }
     
     func setupBase64Functions() {
