@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var lastHideTime: Date = Date()
     
     let tabs: [TabItem] = [
+        TabItem(icon: "house.fill", title: NSLocalizedString("Home", comment: "")),
         TabItem(icon: "square.stack", title: NSLocalizedString("LibraryTab", comment: "")),
         TabItem(icon: "arrow.down.circle", title: NSLocalizedString("DownloadsTab", comment: "")),
         TabItem(icon: "gearshape", title: NSLocalizedString("SettingsTab", comment: "")),
@@ -35,10 +36,12 @@ struct ContentView: View {
     
     private func tabView(for index: Int) -> some View {
         switch index {
-        case 1: return AnyView(DownloadView())
-        case 2: return AnyView(SettingsView())
-        case 3: return AnyView(SearchView(searchQuery: $searchQuery))
-        default: return AnyView(LibraryView())
+        case 0: return AnyView(HomeView())
+        case 1: return AnyView(LibraryView())
+        case 2: return AnyView(DownloadView())
+        case 3: return AnyView(SettingsView())
+        case 4: return AnyView(SearchView(searchQuery: $searchQuery))
+        default: return AnyView(HomeView())
         }
     }
     

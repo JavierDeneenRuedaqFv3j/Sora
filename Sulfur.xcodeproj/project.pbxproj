@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		76E9327A17488262148BE9F3 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0816BE12E13976B43C153FDA /* HomeView.swift */; };
 		0402DA132DE7B5EC003BB42C /* SearchStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0402DA112DE7B5EC003BB42C /* SearchStateView.swift */; };
 		0402DA142DE7B5EC003BB42C /* SearchResultsGrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0402DA102DE7B5EC003BB42C /* SearchResultsGrid.swift */; };
 		0402DA152DE7B5EC003BB42C /* SearchComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0402DA0F2DE7B5EC003BB42C /* SearchComponents.swift */; };
@@ -137,6 +138,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0816BE12E13976B43C153FDA /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		0402DA0F2DE7B5EC003BB42C /* SearchComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchComponents.swift; sourceTree = "<group>"; };
 		0402DA102DE7B5EC003BB42C /* SearchResultsGrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultsGrid.swift; sourceTree = "<group>"; };
 		0402DA112DE7B5EC003BB42C /* SearchStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchStateView.swift; sourceTree = "<group>"; };
@@ -601,6 +603,7 @@
 		133D7C7B2D2BE2630075467E /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				0816BE12E13976B43C153FDA /* HomeView.swift */,
 				04EAC3992DF9E0DB00BBD483 /* SplashScreenView.swift */,
 				72443C7C2DC8036500A61321 /* DownloadView.swift */,
 				04536F732E04BA5600A11248 /* ReaderView */,
@@ -1054,6 +1057,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				76E9327A17488262148BE9F3 /* HomeView.swift in Sources */,
 				041E9D722E11D71F0025F150 /* SettingsViewBackup.swift in Sources */,
 				135CCBE22D4D1138008B9C0E /* SettingsViewPlayer.swift in Sources */,
 				04536F742E04BA5600A11248 /* ReaderView.swift in Sources */,

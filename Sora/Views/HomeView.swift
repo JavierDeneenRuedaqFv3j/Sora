@@ -1,0 +1,374 @@
+//
+//  HomeView.swift
+//  Sora
+//
+//  Home browse view with auto-populated content rows from loaded modules.
+//
+
+import SwiftUI
+import NukeUI
+
+// MARK: - Home Data Manager
+
+@MainActor
+class HomeDataManager: ObservableObject {
+    static let shared = HomeDataManager()
+    
+    @Published var sections: [HomeSection] = []
+    @Published var isLoading = false
+    @Published var hasLoaded = false
+    
+    struct HomeSection: Identifiable {
+        let id = UUID()
+        let title: String
+        let items: [HomeItem]
+        let module: ScrapingModule
+    }
+    
+    struct HomeItem: Identifiable {
+        let id = UUID()
+        let title: String
+        let imageUrl: String
+        let href: String
+    }
+    
+    private let categoryQueries: [(String, String, [String])] = [
+        ("Trending Movies", "trending", ["movie", "show"]),
+        ("Popular TV Shows", "popular", ["show", "movie"]),
+        ("New Releases", "2025", ["movie", "show"]),
+        ("Top Anime", "popular", ["anime"]),
+        ("Action", "action", ["movie", "show"]),
+        ("Comedy", "comedy", ["movie", "show"]),
+        ("Horror", "horror", ["movie", "show"]),
+        ("Sci-Fi", "sci-fi", ["movie", "show"]),
+        ("Romance Anime", "romance", ["anime"]),
+        ("K-Drama", "drama", ["drama", "show"]),
+    ]
+    
+    func loadContent(modules: [ScrapingModule], moduleManager: ModuleManager) async {
+        guard !isLoading else { return }
+        isLoading = true
+        
+        let jsController = JSController.shared
+        var newSections: [HomeSection] = []
+        
+        // Track which modules we've used to rotate through them
+        var usedModuleIndices: [String: Int] = [:]
+        
+        for (title, query, typeKeywords) in categoryQueries {
+            let typeKey = typeKeywords.joined(separator: ",")
+            let nextIndex = usedModuleIndices[typeKey] ?? 0
+            guard let module = findBestModule(modules: modules, typeKeywords: typeKeywords, offset: nextIndex) else { continue }
+            usedModuleIndices[typeKey] = nextIndex + 1
+            
+            do {
+                let jsContent = try moduleManager.getModuleContent(module)
+                jsController.loadScript(jsContent)
+                
+                let items = await withCheckedContinuation { continuation in
+                    if module.metadata.asyncJS == true {
+                        jsController.fetchJsSearchResults(keyword: query, module: module) { searchItems in
+                            let homeItems = searchItems.prefix(20).map { item in
+                                HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
+                            }
+                            continuation.resume(returning: Array(homeItems))
+                        }
+                    } else {
+                        jsController.fetchSearchResults(keyword: query, module: module) { searchItems in
+                            let homeItems = searchItems.prefix(20).map { item in
+                                HomeItem(title: item.title, imageUrl: item.imageUrl, href: item.href)
+                            }
+                            continuation.resume(returning: Array(homeItems))
+                        }
+                    }
+                }
+                
+                if !items.isEmpty {
+                    newSections.append(HomeSection(title: title, items: items, module: module))
+                }
+            } catch {
+                Logger.shared.log("HomeView: Failed to load \(title): \(error.localizedDescription)", type: "Error")
+            }
+        }
+        
+        sections = newSections
+        isLoading = false
+        hasLoaded = true
+    }
+    
+    private func findBestModule(modules: [ScrapingModule], typeKeywords: [String], offset: Int = 0) -> ScrapingModule? {
+        // First try to match by module source name keywords
+        let nameMatches = modules.filter { module in
+            let name = module.metadata.sourceName.lowercased()
+            let lang = (module.metadata.language ?? "").lowercased()
+            let isEnglish = lang.contains("english") || lang.contains("multi") || lang.isEmpty
+            guard isEnglish else { return false }
+            
+            if typeKeywords.contains("anime") {
+                return name.contains("anime") || name.contains("aniwave") || name.contains("hianime") || name.contains("pahe")
+            } else if typeKeywords.contains("drama") {
+                return name.contains("drama") || name.contains("kisskh")
+            } else {
+                // Movie/show type - exclude anime/drama specific
+                return !name.contains("anime") && !name.contains("aniwave") && !name.contains("hianime") && !name.contains("drama") && !name.contains("kisskh") && !name.contains("cartoon") && !name.contains("pahe")
+            }
+        }
+        
+        if !nameMatches.isEmpty {
+            let idx = offset % nameMatches.count
+            return nameMatches[idx]
+        }
+        
+        return modules.first
+    }
+}
+
+// MARK: - Home View
+
+struct HomeView: View {
+    @EnvironmentObject private var moduleManager: ModuleManager
+    @EnvironmentObject private var libraryManager: LibraryManager
+    @StateObject private var homeData = HomeDataManager.shared
+    @State private var continueWatchingItems: [ContinueWatchingItem] = []
+    @State private var isActive: Bool = false
+    
+    var body: some View {
+        NavigationView {
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 24) {
+                    Text("Home")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 20)
+                    
+                    // Continue Watching - reuse Sora's existing component
+                    if !continueWatchingItems.isEmpty {
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "play.fill")
+                                        .font(.subheadline)
+                                    Text("Continue Watching")
+                                        .font(.title3)
+                                        .fontWeight(.semibold)
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 10)
+                            
+                            ContinueWatchingSection(
+                                items: $continueWatchingItems,
+                                markAsWatched: { item in
+                                    ContinueWatchingManager.shared.remove(item: item)
+                                    continueWatchingItems.removeAll { $0.id == item.id }
+                                },
+                                removeItem: { item in
+                                    ContinueWatchingManager.shared.remove(item: item)
+                                    continueWatchingItems.removeAll { $0.id == item.id }
+                                }
+                            )
+                        }
+                    }
+                    
+                    // Loading skeleton
+                    if homeData.isLoading && homeData.sections.isEmpty {
+                        HomeSkeletonView()
+                    }
+                    
+                    // Browse content rows
+                    ForEach(homeData.sections) { section in
+                        HomeSectionRow(
+                            section: section,
+                            moduleManager: moduleManager,
+                            libraryManager: libraryManager
+                        )
+                    }
+                    
+                    // Empty state
+                    if homeData.hasLoaded && homeData.sections.isEmpty && !homeData.isLoading {
+                        HomeEmptyState()
+                    }
+                    
+                    Spacer().frame(height: 100)
+                }
+            }
+            .scrollViewBottomPadding()
+            .onAppear {
+                isActive = true
+                loadContinueWatching()
+                if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
+                    Task {
+                        await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
+                    }
+                }
+                NotificationCenter.default.post(name: .showTabBar, object: nil)
+            }
+            .onDisappear {
+                isActive = false
+            }
+            .onChange(of: moduleManager.modules.count) { _ in
+                if !homeData.hasLoaded && !moduleManager.modules.isEmpty {
+                    Task {
+                        await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .ContinueWatchingDidUpdate)) { _ in
+                loadContinueWatching()
+            }
+            .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
+                let isMediaInfoActive = UserDefaults.standard.bool(forKey: "isMediaInfoActive")
+                let isReaderActive = UserDefaults.standard.bool(forKey: "isReaderActive")
+                if isActive && !isMediaInfoActive && !isReaderActive {
+                    NotificationCenter.default.post(name: .showTabBar, object: nil)
+                }
+            }
+            .refreshable {
+                homeData.hasLoaded = false
+                await homeData.loadContent(modules: moduleManager.modules, moduleManager: moduleManager)
+                loadContinueWatching()
+            }
+            .navigationBarHidden(true)
+        }
+        .navigationViewStyle(.stack)
+    }
+    
+    private func loadContinueWatching() {
+        continueWatchingItems = ContinueWatchingManager.shared.fetchItems()
+    }
+}
+
+// MARK: - Section Row
+
+struct HomeSectionRow: View {
+    let section: HomeDataManager.HomeSection
+    let moduleManager: ModuleManager
+    let libraryManager: LibraryManager
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(section.title)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                Spacer()
+                Text(section.module.metadata.sourceName)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 20)
+            
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(section.items) { item in
+                        NavigationLink(destination:
+                            MediaInfoView(
+                                title: item.title,
+                                imageUrl: item.imageUrl,
+                                href: item.href,
+                                module: section.module
+                            )
+                            .environmentObject(moduleManager)
+                            .environmentObject(libraryManager)
+                        ) {
+                            HomePosterCard(item: item)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+}
+
+struct HomePosterCard: View {
+    let item: HomeDataManager.HomeItem
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            LazyImage(url: URL(string: item.imageUrl)) { state in
+                if let uiImage = state.imageContainer?.image {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Rectangle()
+                        .fill(.tertiary)
+                        .overlay(
+                            ProgressView()
+                                .tint(.secondary)
+                        )
+                }
+            }
+            .frame(width: 130, height: 195)
+            .cornerRadius(10)
+            .clipped()
+            
+            Text(item.title)
+                .font(.caption)
+                .fontWeight(.medium)
+                .foregroundColor(.primary)
+                .lineLimit(2)
+                .frame(width: 130, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Skeleton Loading
+
+struct HomeSkeletonView: View {
+    var body: some View {
+        ForEach(0..<4, id: \.self) { _ in
+            VStack(alignment: .leading, spacing: 12) {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(.tertiary)
+                    .frame(width: 150, height: 20)
+                    .padding(.horizontal, 20)
+                
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(0..<5, id: \.self) { _ in
+                            VStack(alignment: .leading, spacing: 6) {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(.tertiary)
+                                    .frame(width: 130, height: 195)
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(.tertiary)
+                                    .frame(width: 100, height: 12)
+                            }
+                            .shimmering()
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+// MARK: - Empty State
+
+struct HomeEmptyState: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 50))
+                .foregroundColor(.secondary)
+            
+            Text("No Content Available")
+                .font(.title3)
+                .fontWeight(.semibold)
+            
+            Text("Add modules in Settings to start browsing movies, TV shows, and anime.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 80)
+    }
+}
